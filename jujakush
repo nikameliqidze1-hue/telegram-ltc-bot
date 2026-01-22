@@ -1,0 +1,110 @@
+import logging
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+TOKEN = "AAFVLxy85-nUx8M6YDbgw0ijQmaZ4M9_kfY
+"
+ADMIN_ID = 123456789  # აქ ჩასვი შენი Telegram ID
+
+PRICE_GEL = 125
+LTC_ADDRESS = "ltc1qvh6pgumq74vw2grvexj9r80gwgvwv2tq2x5f5p"
+
+orders = {}
+
+logging.basicConfig(level=logging.INFO)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🛒 Buy Product", callback_data="buy")],
+        [InlineKeyboardButton("📞 Support", callback_data="support")]
+    ]
+    await update.message.reply_text(
+        "Welcome to *jujakush* 🛍\n\nChoose an option:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "buy":
+        await query.message.reply_text(
+            f"💰 *Price:* {PRICE_GEL} GEL\n\n"
+            "💳 *Payment method:* Litecoin (LTC)\n\n"
+            f"📥 *Send payment to:*\n`{LTC_ADDRESS}`\n\n"
+            "⚠️ After payment, send your *TX Hash*.",
+            parse_mode="Markdown"
+        )
+        orders[query.from_user.id] = {"step": "tx"}
+
+    elif query.data == "support":
+        await query.message.reply_text(
+            "📞 Support:\nContact admin directly in Telegram."
+        )
+
+    elif query.data.startswith("confirm_"):
+        user_id = int(query.data.split("_")[1])
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="🟢 *Your order has been CONFIRMED!*\n📦 It will be shipped soon.",
+            parse_mode="Markdown"
+        )
+        await query.message.edit_text("✅ Order confirmed")
+
+async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    text = update.message.text
+
+    if user_id in orders and orders[user_id]["step"] == "tx":
+        orders[user_id]["tx"] = text
+        orders[user_id]["step"] = "address"
+        await update.message.reply_text("📦 Please send your delivery address.")
+        return
+
+    if user_id in orders and orders[user_id]["step"] == "address":
+        orders[user_id]["address"] = text
+        orders[user_id]["step"] = "done"
+
+        keyboard = [[
+            InlineKeyboardButton(
+                "✅ Confirm Order",
+                callback_data=f"confirm_{user_id}"
+            )
+        ]]
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "📦 *New Order*\n\n"
+                f"👤 User ID: {user_id}\n"
+                f"💰 Price: {PRICE_GEL} GEL\n"
+                f"🔗 TX: `{orders[user_id]['tx']}`\n"
+                f"🏠 Address: {orders[user_id]['address']}"
+            ),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        await update.message.reply_text(
+            "🟡 *Order received*\nWaiting for confirmation.",
+            parse_mode="Markdown"
+        )
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(buttons))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, messages))
+
+app.run_polling()
